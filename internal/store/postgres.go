@@ -55,6 +55,84 @@ func (s *Store) ResolveStream(ctx context.Context, flussonicStreamName string) (
 	return ref, true, nil
 }
 
+// GetSessionIPCountry returns the ip/country stored for a session (written at
+// play_opened/started). found=false when no row exists yet. The ip/country
+// columns are nullable, so an existing row may still yield empty strings.
+func (s *Store) GetSessionIPCountry(ctx context.Context, streamID, tenantID, sessionID string) (ip, country string, found bool, err error) {
+	var ipN, countryN *string
+	err = s.pool.QueryRow(ctx,
+		`SELECT ip, country FROM session_events
+		 WHERE session_id = $1 AND stream_id = $2 AND tenant_id = $3
+		 LIMIT 1`,
+		sessionID, streamID, tenantID,
+	).Scan(&ipN, &countryN)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return "", "", false, nil
+		}
+		return "", "", false, err
+	}
+	if ipN != nil {
+		ip = *ipN
+	}
+	if countryN != nil {
+		country = *countryN
+	}
+	return ip, country, true, nil
+}
+
+// SessionGeoIPData is one full GeoLite2 enrichment row for session_geoip.
+// Mirrors backendV2's GeoIpEnrichment.
+type SessionGeoIPData struct {
+	SessionID string
+	IP        string
+	TenantID  string
+
+	ContinentCode      string
+	ContinentGeonameID uint
+	ContinentName      string
+
+	CountryISO       string
+	CountryGeonameID uint
+	CountryName      string
+
+	RegisteredCountryISO  string
+	RegisteredCountryName string
+
+	CityGeonameID uint
+	CityName      string
+
+	Latitude       float64
+	Longitude      float64
+	AccuracyRadius uint16
+	TimeZone       string
+}
+
+// InsertSessionGeoIP mirrors AnalyticsEventProcessor's geoIpService.enrichAndSave:
+// one row per (session_id, ip), deduped via ON CONFLICT DO NOTHING against the
+// uq_session_geoip_session_ip constraint. Empty/zero optional fields are stored
+// as NULL. looked_up_at uses the column default (now()).
+func (s *Store) InsertSessionGeoIP(ctx context.Context, d SessionGeoIPData) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO session_geoip (
+		 	session_id, ip, tenant_id,
+		 	continent_code, continent_geoname_id, continent_name,
+		 	country_iso_code, country_geoname_id, country_name,
+		 	registered_country_iso, registered_country_name,
+		 	city_geoname_id, city_name,
+		 	latitude, longitude, accuracy_radius, time_zone)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		 ON CONFLICT (session_id, ip) DO NOTHING`,
+		d.SessionID, d.IP, d.TenantID,
+		nz(d.ContinentCode), nzUint(d.ContinentGeonameID), nz(d.ContinentName),
+		nz(d.CountryISO), nzUint(d.CountryGeonameID), nz(d.CountryName),
+		nz(d.RegisteredCountryISO), nz(d.RegisteredCountryName),
+		nzUint(d.CityGeonameID), nz(d.CityName),
+		d.Latitude, d.Longitude, nzUint(uint(d.AccuracyRadius)), nz(d.TimeZone),
+	)
+	return err
+}
+
 type SessionData struct {
 	StreamID  string
 	TenantID  string
@@ -71,6 +149,15 @@ func nz(s string) any {
 		return nil
 	}
 	return s
+}
+
+// nzUint maps a zero geoname-id/accuracy to NULL, otherwise an int64 the integer
+// columns accept.
+func nzUint(u uint) any {
+	if u == 0 {
+		return nil
+	}
+	return int64(u)
 }
 
 // SaveSessionOpen mirrors AnalyticsService.saveSessionOpen.

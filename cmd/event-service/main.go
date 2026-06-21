@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -130,6 +131,24 @@ func main() {
 	r.Get("/event-service/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+	// Read-only GeoIP lookup for testing: GET /event-service/geoip?ip=8.8.8.8.
+	// Returns the raw GeoLite2 record (keys match session_geoip columns). Does
+	// NOT write anything.
+	r.Get("/event-service/geoip", func(w http.ResponseWriter, req *http.Request) {
+		ip := req.URL.Query().Get("ip")
+		w.Header().Set("Content-Type", "application/json")
+		if ip == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "missing ?ip= query param"})
+			return
+		}
+		res := geo.Lookup(ip)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ip":     ip,
+			"found":  res != nil,
+			"result": res,
+		})
 	})
 	// Path mirrors backendV2 exactly (global prefix api/v1 + @Controller('webhooks')
 	// + 'flussonic/event-sink') so it is a drop-in for the Flussonic event_sink URL.

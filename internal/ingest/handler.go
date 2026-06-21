@@ -118,6 +118,8 @@ func (h *Handler) handleOne(ctx context.Context, p *model.FlussonicEventPayload)
 		sessionID = p.SessionID
 	}
 
+	h.log.Info("event received", "event", eventName, "ip", p.IP, "session", sessionID)
+
 	ev := model.ProcessedEvent{
 		Event:               eventName,
 		Time:                p.Time,

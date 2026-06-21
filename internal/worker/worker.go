@@ -31,6 +31,7 @@ type Processor struct {
 	geo       *geoip.Reader
 	cache     *streamcache.Cache
 	coalescer *summaryCoalescer
+	geoCache  *ipGeoCache
 	log       *slog.Logger
 }
 
@@ -43,7 +44,7 @@ func NewProcessor(
 	debounce time.Duration,
 	log *slog.Logger,
 ) *Processor {
-	p := &Processor{st: st, state: state, flu: flu, geo: geo, cache: cache, log: log}
+	p := &Processor{st: st, state: state, flu: flu, geo: geo, cache: cache, geoCache: newIPGeoCache(), log: log}
 	p.coalescer = newSummaryCoalescer(debounce, p.rebuildAndPublish)
 	return p
 }
@@ -102,7 +103,7 @@ func (p *Processor) dispatch(ctx context.Context, et *model.EventType, ev model.
 	case "play":
 		switch et.Action {
 		case "opened":
-			return p.st.SaveSessionOpen(ctx, sessionData(ev))
+			return p.playOpened(ctx, ev)
 		case "started":
 			return p.playStarted(ctx, ev)
 		case "closed":
@@ -157,6 +158,16 @@ func (p *Processor) setStatusAndMark(ctx context.Context, ev model.ProcessedEven
 	return nil
 }
 
+// playOpened persists the opening session row, then enriches session_geoip from
+// the event's own IP (fire-once, deduped). Mirrors backendV2's play.opened.
+func (p *Processor) playOpened(ctx context.Context, ev model.ProcessedEvent) error {
+	if err := p.st.SaveSessionOpen(ctx, sessionData(ev)); err != nil {
+		return err
+	}
+	p.enrichAndSaveGeoIP(ctx, ev.SessionID, ev.IP, ev.TenantID)
+	return nil
+}
+
 func (p *Processor) playStarted(ctx context.Context, ev model.ProcessedEvent) error {
 	if ev.SessionID == "" {
 		return nil
@@ -166,6 +177,9 @@ func (p *Processor) playStarted(ctx context.Context, ev model.ProcessedEvent) er
 	if err := p.st.SaveSessionStarted(ctx, sessionDataWith(ev, ip, country)); err != nil {
 		return err
 	}
+
+	// GeoIP enrichment with the resolved IP (event → DB → Flussonic cascade).
+	p.enrichAndSaveGeoIP(ctx, ev.SessionID, ip, ev.TenantID)
 
 	geoCountry, city := p.geoLookup(ip)
 	devType := deviceType(ev.UserAgent)
@@ -231,13 +245,35 @@ func (p *Processor) adInjected(ctx context.Context, ev model.ProcessedEvent) err
 	return nil
 }
 
-// sessionIPCountry enriches IP/country from the Flussonic session API, falling
-// back to the event's own values (mirrors the getSession calls in backendV2).
+// sessionIPCountry resolves a session's IP/country via a cascade, cheapest and
+// most authoritative source first: the event payload, then the row stored at
+// play_opened, and only as a last resort the Flussonic session API. This avoids
+// a Flussonic round-trip for the common case (event carries an IP) and stays
+// correct in multi-Flussonic topologies where getSession often 404s because the
+// session lives on a different node.
 func (p *Processor) sessionIPCountry(ctx context.Context, ev model.ProcessedEvent) (ip, country string) {
 	ip, country = ev.IP, ev.Country
+
+	// 1. Event already carries an IP — authoritative, no lookups.
+	if ip != "" {
+		return
+	}
 	if ev.SessionID == "" {
 		return
 	}
+
+	// 2. Fall back to the IP/country stored at play_opened.
+	if dbIP, dbCountry, found, err := p.st.GetSessionIPCountry(ctx, ev.StreamID, ev.TenantID, ev.SessionID); err != nil {
+		p.log.Debug("getSessionIPCountry failed", "session", ev.SessionID, "err", err)
+	} else if found && dbIP != "" {
+		ip = dbIP
+		if country == "" {
+			country = dbCountry
+		}
+		return
+	}
+
+	// 3. Last resort: ask Flussonic.
 	sess, err := p.flu.GetSession(ctx, ev.SessionID)
 	if err != nil {
 		p.log.Debug("getSession failed", "session", ev.SessionID, "err", err)

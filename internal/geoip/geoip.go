@@ -1,8 +1,11 @@
 // Package geoip wraps the MaxMind GeoLite2-City database.
 //
-// Parity: backendV2 reads country.iso_code, country.names.en, city.names.en and
-// location.{latitude,longitude}. Use the SAME .mmdb file as backendV2 to keep
-// the derived `cities` Redis key (`<country_code>:<city>`) consistent.
+// Parity: the realtime Redis viewers path reads country.iso_code,
+// country.names.en, city.names.en and location.{latitude,longitude}; the
+// session_geoip enrichment (mirroring backendV2's GeoIpService.enrichAndSave)
+// reads the full record (continent, registered country, geoname ids, accuracy,
+// time zone). Use the SAME .mmdb file as backendV2 to keep the derived `cities`
+// Redis key (`<country_code>:<city>`) and the session_geoip rows consistent.
 package geoip
 
 import (
@@ -11,12 +14,28 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
+// Result is the full GeoLite2-City lookup, covering both the realtime Redis
+// viewers path (Country*/City/Lat/Lng) and the session_geoip enrichment (the
+// remaining fields). Mirrors backendV2's GeoLite2LookupResult.
 type Result struct {
-	CountryISO  string
-	CountryName string
-	City        string
-	Lat         float64
-	Lng         float64
+	ContinentCode      string `json:"continent_code"`
+	ContinentGeonameID uint   `json:"continent_geoname_id"`
+	ContinentName      string `json:"continent_name"`
+
+	CountryISO       string `json:"country_iso_code"`
+	CountryGeonameID uint   `json:"country_geoname_id"`
+	CountryName      string `json:"country_name"`
+
+	RegisteredCountryISO  string `json:"registered_country_iso"`
+	RegisteredCountryName string `json:"registered_country_name"`
+
+	CityGeonameID uint   `json:"city_geoname_id"`
+	City          string `json:"city_name"`
+
+	Lat            float64 `json:"latitude"`
+	Lng            float64 `json:"longitude"`
+	AccuracyRadius uint16  `json:"accuracy_radius"`
+	TimeZone       string  `json:"time_zone"`
 }
 
 type Reader struct {
@@ -54,11 +73,24 @@ func (r *Reader) Lookup(ip string) *Result {
 		return nil
 	}
 	res := &Result{
-		CountryISO:  rec.Country.IsoCode,
-		CountryName: rec.Country.Names["en"],
-		City:        rec.City.Names["en"],
-		Lat:         rec.Location.Latitude,
-		Lng:         rec.Location.Longitude,
+		ContinentCode:      rec.Continent.Code,
+		ContinentGeonameID: rec.Continent.GeoNameID,
+		ContinentName:      rec.Continent.Names["en"],
+
+		CountryISO:       rec.Country.IsoCode,
+		CountryGeonameID: rec.Country.GeoNameID,
+		CountryName:      rec.Country.Names["en"],
+
+		RegisteredCountryISO:  rec.RegisteredCountry.IsoCode,
+		RegisteredCountryName: rec.RegisteredCountry.Names["en"],
+
+		CityGeonameID: rec.City.GeoNameID,
+		City:          rec.City.Names["en"],
+
+		Lat:            rec.Location.Latitude,
+		Lng:            rec.Location.Longitude,
+		AccuracyRadius: rec.Location.AccuracyRadius,
+		TimeZone:       rec.Location.TimeZone,
 	}
 	return res
 }

@@ -56,8 +56,21 @@ the schema as a contract.
   `.mmdb` backendV2 uses so the `cities` key (`<country_code>:<city>`) matches.
 - **User-agent**: uses `mileusna/useragent` (close, not byte-identical to
   ua-parser-js); affects only secondary device columns.
-- **session_events geo-column enrichment** (`geoIpService.enrichAndSave`) is not
-  yet ported — primary `country`/`city` columns and the realtime Redis path are.
+- **`session_geoip` enrichment is ported** — `play_opened`/`play_started` write a
+  full GeoLite2 row (continent, country, registered country, city, lat/lng,
+  accuracy, time zone) via `InsertSessionGeoIP`, deduped per `(session_id, ip)`
+  with `ON CONFLICT DO NOTHING`, behind a per-IP lookup cache (10k / 1h). Mirrors
+  backendV2's `geoIpService.enrichAndSave`. The daily 365-day cleanup cron is NOT
+  ported — backendV2's `@Cron` still owns `session_geoip` retention. Empty GeoIP
+  subfields are stored as NULL (backendV2 occasionally stores `''`/`0`); populated
+  values match.
+- **Session IP/country resolution is DB-first/event-first by design** — diverges
+  from backendV2. This service resolves a session's IP via a cascade (event
+  payload → `session_events` row from play_opened → Flussonic `getSession` as a
+  last resort), whereas backendV2 still calls `getSession` first and overrides
+  the event values. The cascade avoids a Flussonic round-trip in the common case
+  and stays correct in multi-Flussonic topologies (one `FLUSSONIC_API_URL`, so
+  `getSession` 404s when the session lives on another node).
 
 ## Run
 
