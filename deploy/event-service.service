@@ -1,0 +1,29 @@
+[Unit]
+Description=StreamForge Event Service - Flussonic event_sink ingest pipeline
+Documentation=https://github.com/shoelfikar/event-service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=event-service
+Group=event-service
+# Config is loaded as environment variables (matches internal/config). The file
+# must exist; the installer seeds it from .env.example at /etc/event-service.
+EnvironmentFile=/etc/event-service/event-service.env
+WorkingDirectory=/var/lib/event-service
+ExecStart=/usr/local/bin/event-service
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+TimeoutStopSec=30s
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/event-service
+
+[Install]
+WantedBy=multi-user.target

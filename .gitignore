@@ -1,0 +1,54 @@
+# ── Secrets / local config ──────────────────────────────────────────
+# Real config holds DB/Redis/Flussonic credentials. Never commit it.
+# The committed template is .env.example (whitelisted below).
+.env
+.env.*
+!.env.example
+
+# ── Go build output ─────────────────────────────────────────────────
+# Compiled binary (name matches `go build ./cmd/event-service`).
+/event-service
+event-service
+cmd/event-service/event-service
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test / coverage / profiling artifacts
+*.test
+*.out
+coverage.*
+profile.*
+
+# Go workspace file (machine-local)
+go.work
+go.work.sum
+
+# ── GoReleaser ──────────────────────────────────────────────────────
+# Release artifacts built by `goreleaser release` / `--snapshot`.
+/dist/
+
+# ── GeoIP database ──────────────────────────────────────────────────
+# MaxMind GeoLite2 is license-restricted and large — provide it at deploy
+# time, do not commit it.
+*.mmdb
+
+# ── Runtime / data ──────────────────────────────────────────────────
+*.log
+logs/
+tmp/
+*.pid
+
+# ── Editors / IDE ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS cruft ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db

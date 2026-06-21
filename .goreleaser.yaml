@@ -1,0 +1,105 @@
+# GoReleaser v2 config — https://goreleaser.com
+# Trigger: push tag `v*` (see .github/workflows/release.yml).
+version: 2
+
+project_name: event-service
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: event-service
+    main: ./cmd/event-service
+    binary: event-service
+    env:
+      - CGO_ENABLED=0 # pure-Go (maxminddb/pgx/go-redis) → static binary
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+
+archives:
+  - id: default
+    ids: [event-service]
+    # Use .Tag (keeps the leading `v`) so the asset name matches what
+    # scripts/event-service.sh downloads: event-service_vX.Y.Z_<os>_<arch>.
+    name_template: >-
+      {{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}
+    # Extract into a directory of the same name; the bootstrap installer's
+    # primary EXTRACT_DIR path expects this layout (it has a flat fallback too).
+    wrap_in_directory: true
+    formats: [tar.gz]
+    files:
+      # Bundle the installer + unit + config template FLAT beside the binary so
+      # install.sh finds them via its own script_dir (strip_parent removes the
+      # scripts/ and deploy/ prefixes).
+      - src: scripts/install.sh
+        strip_parent: true
+      - src: deploy/event-service.service
+        strip_parent: true
+      # .env.example is tracked; the real .env is gitignored to keep secrets out
+      # of source control, so it would not exist on a fresh CI checkout.
+      - .env.example
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  # owner/name intentionally omitted — goreleaser-action reads GITHUB_REPOSITORY
+  # from the workflow env, so the release lands on the repo that triggered it.
+  draft: false
+  prerelease: auto
+  name_template: "{{ .ProjectName }} {{ .Tag }}"
+  header: |
+    ## Install (Linux / systemd)
+
+    One-liner:
+    ```
+    curl -fsSL https://raw.githubusercontent.com/{{ .Env.GITHUB_REPOSITORY }}/main/scripts/event-service.sh | sudo bash
+    ```
+
+    Or manually from the tarball:
+    ```
+    tar xzf event-service_{{ .Tag }}_linux_amd64.tar.gz
+    cd event-service_{{ .Tag }}_linux_amd64
+    sudo ./install.sh
+    ```
+
+    The installer creates a system user, installs the binary to
+    `/usr/local/bin/event-service`, places the systemd unit at
+    `/etc/systemd/system/event-service.service`, and seeds
+    `/etc/event-service/event-service.env` if absent.
+
+    **Prerequisites:** reachable Postgres/TimescaleDB + Redis (shared with
+    backendV2) and a MaxMind `GeoLite2-City.mmdb` (license-restricted, not
+    bundled). Set these in `/etc/event-service/event-service.env`.
