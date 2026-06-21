@@ -7,9 +7,10 @@
 
 # ── Go build output ─────────────────────────────────────────────────
 # Compiled binary (name matches `go build ./cmd/event-service`).
+# NOTE: patterns are anchored with `/` so they only match the built binary —
+# a bare `event-service` would also ignore the SOURCE dir cmd/event-service/.
 /event-service
-event-service
-cmd/event-service/event-service
+/cmd/event-service/event-service
 *.exe
 *.exe~
 *.dll
