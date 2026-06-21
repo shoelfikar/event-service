@@ -17,9 +17,14 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    ignore:
+      # Windows on arm64 not requested — keep the release surface tight.
+      - goos: windows
+        goarch: arm64
     flags:
       - -trimpath
     ldflags:
@@ -36,11 +41,18 @@ archives:
     # primary EXTRACT_DIR path expects this layout (it has a flat fallback too).
     wrap_in_directory: true
     formats: [tar.gz]
+    format_overrides:
+      # Windows users expect a .zip; the Linux installer scripts/unit bundled
+      # below are inert there (the binary is event-service.exe).
+      - goos: windows
+        formats: [zip]
     files:
       # Bundle the installer + unit + config template FLAT beside the binary so
       # install.sh finds them via its own script_dir (strip_parent removes the
       # scripts/ and deploy/ prefixes).
       - src: scripts/install.sh
+        strip_parent: true
+      - src: scripts/uninstall.sh
         strip_parent: true
       - src: deploy/event-service.service
         strip_parent: true

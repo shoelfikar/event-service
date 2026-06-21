@@ -105,7 +105,7 @@ func loadDotenv() {
 	if v := os.Getenv("ENV_FILE"); v != "" {
 		paths = strings.Split(v, ",")
 	} else {
-		paths = []string{".env"}
+		paths = []string{"event-service.env", ".env"}
 	}
 	for _, p := range paths {
 		p = strings.TrimSpace(p)
